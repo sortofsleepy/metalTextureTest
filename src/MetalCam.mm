@@ -13,32 +13,51 @@
 // Include header shared between C code here, which executes Metal API commands, and .metal files
 #import "ShaderTypes.h"
 
-@implementation MetalCamView
+// The max number of command buffers in flight
+static const NSUInteger kMaxBuffersInFlight = 3;
 static const float kImagePlaneVertexData[16] = {
     -1.0, -1.0,  0.0, 1.0,
     1.0, -1.0,  1.0, 1.0,
     -1.0,  1.0,  0.0, 0.0,
     1.0,  1.0,  1.0, 0.0,
 };
+@implementation MetalCamView
+
 
 -(void)drawRect:(CGRect)rect{
     if(!self.currentDrawable || !self.currentRenderPassDescriptor){
+        NSLog(@"unable to render");
         return;
     }
+    
+    NSLog(@"Rendering");
 }
 @end
 
 // ========= Implement the renderer ========= //
 @implementation MetalCamRenderer
 
+// returns the MTKView object
+- (MetalCamView*) getView {
+    return _view;
+}
+
+// sets the viewport 
+- (void)setViewport:(CGRect)_viewport{
+    self->_viewport = _viewport;
+}
 -(instancetype)setup:(ARSession*) session {
     self = [super init];
     
     if(self){
         _session = session;
-        _view = [[MetalCamView alloc] init];
         _device = MTLCreateSystemDefaultDevice();
-        _view.device = _device;
+        
+        //_view = [[MetalCamView alloc] init];
+        //_view.device = _device;
+        _view = [[MetalCamView alloc] initWithFrame:CGRectMake(0, 0, 100, 100) device:_device];
+        _view.enableSetNeedsDisplay = NO;
+        _view.paused = YES;
         
         [self loadMetal];
     }
@@ -48,10 +67,13 @@ static const float kImagePlaneVertexData[16] = {
 
 
 - (void) draw{
-    //[_view draw];
+    [_view draw];
 }
 
 -(void) loadMetal {
+    
+    _inFlightSemaphore = dispatch_semaphore_create(kMaxBuffersInFlight);
+    
     _view.depthStencilPixelFormat = MTLPixelFormatDepth32Float_Stencil8;
     _view.colorPixelFormat = MTLPixelFormatBGRA8Unorm;
     _view.sampleCount = 1;
@@ -114,6 +136,9 @@ static const float kImagePlaneVertexData[16] = {
  
     // initialize image cache
     CVMetalTextureCacheCreate(NULL, NULL, _device, NULL, &_capturedImageTextureCache);
+    
+    // Create the command queue
+    _commandQueue = [_device newCommandQueue];
 }
 @end
 

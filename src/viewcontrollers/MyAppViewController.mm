@@ -20,17 +20,21 @@
     
     ARCore::SFormat format;
     self.session = ARCore::generateNewSession(format);
+    //camera = [[MetalCamRenderer alloc] setup:self.session];
     
   
     OFAppViewController *viewController;
     viewController = [[[OFAppViewController alloc] initWithFrame:[[UIScreen mainScreen] bounds]
                                                                  app:new ofApp(self.session)] autorelease];
     
-    camera = [[MetalCamRenderer alloc] setup:self.session];
+    //viewController.view = [camera getView];
+    //[viewController.view addSubview:[camera getView]];
+    
     
     [self.navigationController setNavigationBarHidden:TRUE];
     [self.navigationController pushViewController:viewController animated:NO];
     self.navigationController.navigationBar.topItem.title = @"ofApp";
+ 
 }
 
 

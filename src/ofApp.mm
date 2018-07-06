@@ -15,9 +15,7 @@ ofApp :: ~ofApp () {
 
 //--------------------------------------------------------------
 void ofApp::setup(){	
-    ARCore::SFormat format;
-    format.enableLighting();
-    ARSession * session = ARCore::generateNewSession(format);
+    camera = [[MetalCamRenderer alloc] setup:session];
     
 
     
@@ -26,11 +24,12 @@ void ofApp::setup(){
 //--------------------------------------------------------------
 void ofApp::update(){
 
+    [camera draw];
 }
 
 //--------------------------------------------------------------
 void ofApp::draw(){
-    [renderer draw];
+ 
 }
 
 //--------------------------------------------------------------

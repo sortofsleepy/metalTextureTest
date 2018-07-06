@@ -31,6 +31,8 @@ NS_ASSUME_NONNULL_BEGIN
     ARSession * _session;
     MetalCamView * _view;
     
+    dispatch_semaphore_t _inFlightSemaphore;
+
     // Metal objects
     id <MTLDevice> _device;
     id <MTLCommandQueue> _commandQueue;
@@ -45,8 +47,24 @@ NS_ASSUME_NONNULL_BEGIN
     CVMetalTextureRef _capturedImageTextureYRef;
     CVMetalTextureRef _capturedImageTextureCbCrRef;
     
+    // Captured image texture cache
+    CVMetalTextureCacheRef _capturedImageTextureCache;
+    
+    
+    // The current viewport size
+    //CGSize _viewportSize;
+    
+    // Flag for viewport size changes
+    BOOL _viewportSizeDidChange;
+    
+    // current viewport settings - using CGRect cause
+    // it's needed to allow things to render correctly.
+    CGRect _viewport;
+    
 }
--(void) loadMetal;
+- (MetalCamView*) getView;
+- (void) loadMetal;
+- (void) setViewport:(CGRect) _viewport;
 - (instancetype) setup:(ARSession*) session;
 - (void) draw;
 @end

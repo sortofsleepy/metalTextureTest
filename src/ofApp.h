@@ -27,7 +27,7 @@ class ofApp : public ofxiOSApp {
         void gotFocus();
         void gotMemoryWarning();
         void deviceOrientationChanged(int newOrientation);
-    MetalCamRenderer * renderer;
+    MetalCamRenderer * camera;
 };
 
 
