@@ -20,14 +20,14 @@
     
     ARCore::SFormat format;
     self.session = ARCore::generateNewSession(format);
-    //camera = [[MetalCamRenderer alloc] setup:self.session];
+    camera = [[MetalCamRenderer alloc] setup:self.session];
     
   
     OFAppViewController *viewController;
     viewController = [[[OFAppViewController alloc] initWithFrame:[[UIScreen mainScreen] bounds]
                                                                  app:new ofApp(self.session)] autorelease];
     
-    //viewController.view = [camera getView];
+    viewController.view = [camera getView];
     //[viewController.view addSubview:[camera getView]];
     
     

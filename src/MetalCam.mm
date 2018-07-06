@@ -32,42 +32,47 @@ static const float kImagePlaneVertexData[16] = {
     
     NSLog(@"Rendering");
 }
-@end
 
-// ========= Implement the renderer ========= //
-@implementation MetalCamRenderer
 
-// returns the MTKView object
-- (MetalCamView*) getView {
-    return _view;
-}
-
-// sets the viewport 
+// sets the viewport
 - (void)setViewport:(CGRect)_viewport{
     self->_viewport = _viewport;
 }
--(instancetype)setup:(ARSession*) session {
-    self = [super init];
+
+- (void) update {
+    // Create two textures (Y and CbCr) from the provided frame's captured image
+    CVPixelBufferRef pixelBuffer = _session.currentFrame.capturedImage;
     
-    if(self){
-        _session = session;
-        _device = MTLCreateSystemDefaultDevice();
-        
-        //_view = [[MetalCamView alloc] init];
-        //_view.device = _device;
-        _view = [[MetalCamView alloc] initWithFrame:CGRectMake(0, 0, 100, 100) device:_device];
-        _view.enableSetNeedsDisplay = NO;
-        _view.paused = YES;
-        
-        [self loadMetal];
+    if (CVPixelBufferGetPlaneCount(pixelBuffer) < 2) {
+        return;
     }
     
-    return self;
+    CVBufferRelease(_capturedImageTextureYRef);
+    CVBufferRelease(_capturedImageTextureCbCrRef);
+    _capturedImageTextureYRef = [self _createTextureFromPixelBuffer:pixelBuffer pixelFormat:MTLPixelFormatR8Unorm planeIndex:0];
+    _capturedImageTextureCbCrRef = [self _createTextureFromPixelBuffer:pixelBuffer pixelFormat:MTLPixelFormatRG8Unorm planeIndex:1];
 }
 
 
-- (void) draw{
-    [_view draw];
+- (void)dealloc {
+    [super dealloc];
+    CVBufferRelease(_capturedImageTextureYRef);
+    CVBufferRelease(_capturedImageTextureCbCrRef);
+}
+
+- (CVMetalTextureRef)_createTextureFromPixelBuffer:(CVPixelBufferRef)pixelBuffer pixelFormat:(MTLPixelFormat)pixelFormat planeIndex:(NSInteger)planeIndex {
+    
+    const size_t width = CVPixelBufferGetWidthOfPlane(pixelBuffer, planeIndex);
+    const size_t height = CVPixelBufferGetHeightOfPlane(pixelBuffer, planeIndex);
+    
+    CVMetalTextureRef mtlTextureRef = nil;
+    CVReturn status = CVMetalTextureCacheCreateTextureFromImage(NULL, _capturedImageTextureCache, pixelBuffer, NULL, pixelFormat, width, height, planeIndex, &mtlTextureRef);
+    if (status != kCVReturnSuccess) {
+        CVBufferRelease(mtlTextureRef);
+        mtlTextureRef = nil;
+    }
+    
+    return mtlTextureRef;
 }
 
 -(void) loadMetal {
@@ -79,13 +84,13 @@ static const float kImagePlaneVertexData[16] = {
     _view.sampleCount = 1;
     
     // Create a vertex buffer with our image plane vertex data.
-    _imagePlaneVertexBuffer = [_device newBufferWithBytes:&kImagePlaneVertexData length:sizeof(kImagePlaneVertexData) options:MTLResourceCPUCacheModeDefaultCache];
+    _imagePlaneVertexBuffer = [self.device newBufferWithBytes:&kImagePlaneVertexData length:sizeof(kImagePlaneVertexData) options:MTLResourceCPUCacheModeDefaultCache];
     
     _imagePlaneVertexBuffer.label = @"ImagePlaneVertexBuffer";
     
     // Load all the shader files with a metal file extension in the project
     // NOTE - this line will throw an exception if you don't have a .metal file as part of your compiled sources.
-    id <MTLLibrary> defaultLibrary = [_device newDefaultLibrary];
+    id <MTLLibrary> defaultLibrary = [self.device newDefaultLibrary];
     
     id <MTLFunction> capturedImageVertexFunction = [defaultLibrary newFunctionWithName:@"capturedImageVertexTransform"];
     id <MTLFunction> capturedImageFragmentFunction = [defaultLibrary newFunctionWithName:@"capturedImageFragmentShader"];
@@ -108,8 +113,8 @@ static const float kImagePlaneVertexData[16] = {
     imagePlaneVertexDescriptor.layouts[kBufferIndexMeshPositions].stride = 16;
     imagePlaneVertexDescriptor.layouts[kBufferIndexMeshPositions].stepRate = 1;
     imagePlaneVertexDescriptor.layouts[kBufferIndexMeshPositions].stepFunction = MTLVertexStepFunctionPerVertex;
-
-
+    
+    
     // Create a pipeline state for rendering the captured image
     MTLRenderPipelineDescriptor *capturedImagePipelineStateDescriptor = [[MTLRenderPipelineDescriptor alloc] init];
     capturedImagePipelineStateDescriptor.label = @"MyCapturedImagePipeline";
@@ -121,8 +126,8 @@ static const float kImagePlaneVertexData[16] = {
     capturedImagePipelineStateDescriptor.depthAttachmentPixelFormat = _view.depthStencilPixelFormat;
     capturedImagePipelineStateDescriptor.stencilAttachmentPixelFormat = _view.depthStencilPixelFormat;
     
-     NSError *error = nil;
-     _capturedImagePipelineState = [_device newRenderPipelineStateWithDescriptor:capturedImagePipelineStateDescriptor error:&error];
+    NSError *error = nil;
+    _capturedImagePipelineState = [self.device newRenderPipelineStateWithDescriptor:capturedImagePipelineStateDescriptor error:&error];
     if (!_capturedImagePipelineState) {
         NSLog(@"Failed to created captured image pipeline state, error %@", error);
     }
@@ -132,13 +137,41 @@ static const float kImagePlaneVertexData[16] = {
     MTLDepthStencilDescriptor *capturedImageDepthStateDescriptor = [[MTLDepthStencilDescriptor alloc] init];
     capturedImageDepthStateDescriptor.depthCompareFunction = MTLCompareFunctionAlways;
     capturedImageDepthStateDescriptor.depthWriteEnabled = NO;
-    _capturedImageDepthState = [_device newDepthStencilStateWithDescriptor:capturedImageDepthStateDescriptor];
- 
+    _capturedImageDepthState = [self.device newDepthStencilStateWithDescriptor:capturedImageDepthStateDescriptor];
+    
     // initialize image cache
-    CVMetalTextureCacheCreate(NULL, NULL, _device, NULL, &_capturedImageTextureCache);
+    CVMetalTextureCacheCreate(NULL, NULL, self.device, NULL, &_capturedImageTextureCache);
     
     // Create the command queue
-    _commandQueue = [_device newCommandQueue];
+    _commandQueue = [self.device newCommandQueue];
 }
+@end
+
+// ========= Implement the renderer ========= //
+@implementation MetalCamRenderer
+- (instancetype) setupWithViewport:(ARSession*)session second:(CGRect) _viewport{
+    
+    
+    return self;
+}
+
+// returns the MTKView object
+- (MetalCamView*) getView {
+    return _view;
+}
+
+- (instancetype) setup:(ARSession*) session{
+    self = [super init];
+    
+    if(self){
+        _session = session;
+        
+        _view = [[MetalCamView alloc] init];
+        _view.device = MTLCreateSystemDefaultDevice();
+    }
+
+    return self;
+}
+
 @end
 
