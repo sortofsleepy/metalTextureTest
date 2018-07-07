@@ -43,7 +43,8 @@ NS_ASSUME_NONNULL_BEGIN
     CVMetalTextureCacheRef _capturedImageTextureCache;
     
     // The current viewport size
-    CGSize _viewportSize;
+    // NOTE : just get the "size" param from _viewport
+    //CGSize _viewportSize;
     
     // Flag for viewport size changes
     BOOL _viewportSizeDidChange;
@@ -52,15 +53,13 @@ NS_ASSUME_NONNULL_BEGIN
     // it's needed to allow things to render correctly.
     CGRect _viewport;
 }
-
-
-- (void) loadMetal;
+- (void) _setSemaphore:(dispatch_semaphore_t) inFlightSemaphore;
+- (void) _setSession:(ARSession*) session;
+- (void) _updateImagePlaneWithFrame;
+- (void) _updateCameraImage;
+- (void) _loadMetal;
 - (void) setViewport:(CGRect) _viewport;
-- (instancetype) setupWithViewport:(ARSession*)session second:(CGRect) _viewport;
-- (instancetype) setup:(ARSession*) session;
-//- (CVMetalTextureRef)_createTextureFromPixelBuffer:(CVPixelBufferRef)pixelBuffer pixelFormat:(MTLPixelFormat)pixelFormat;
 - (void) update;
-- (void) draw;
 @end
 
 
@@ -76,6 +75,7 @@ NS_ASSUME_NONNULL_BEGIN
     
 }
 - (MetalCamView*) getView;
+- (instancetype) setup:(ARSession*) session;
 @end
 
 NS_ASSUME_NONNULL_END

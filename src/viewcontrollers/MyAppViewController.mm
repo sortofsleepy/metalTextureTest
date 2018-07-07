@@ -18,8 +18,17 @@
 - (void)loadView {
     [super loadView];
     
-    ARCore::SFormat format;
-    self.session = ARCore::generateNewSession(format);
+   
+    self.session = [ARSession new];
+
+    ARWorldTrackingConfiguration *configuration = [ARWorldTrackingConfiguration new];
+    
+    // setup horizontal plane detection - note that this is optional
+    configuration.planeDetection = ARPlaneDetectionHorizontal;
+    
+    // start the session
+    [self.session runWithConfiguration:configuration];
+    
     camera = [[MetalCamRenderer alloc] setup:self.session];
     
   
