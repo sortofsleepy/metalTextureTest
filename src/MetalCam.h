@@ -22,10 +22,7 @@ NS_ASSUME_NONNULL_BEGIN
 
 @interface MetalCamView : MTKView {
     ARSession * _session;
-    MetalCamView * _view;
-    
-    dispatch_semaphore_t _inFlightSemaphore;
-    
+
     // Metal objects
     id <MTLCommandQueue> _commandQueue;
     id <MTLBuffer> _sharedUniformBuffer;
@@ -42,10 +39,6 @@ NS_ASSUME_NONNULL_BEGIN
     // Captured image texture cache
     CVMetalTextureCacheRef _capturedImageTextureCache;
     
-    // The current viewport size
-    // NOTE : just get the "size" param from _viewport
-    //CGSize _viewportSize;
-    
     // Flag for viewport size changes
     BOOL _viewportSizeDidChange;
     
@@ -53,13 +46,16 @@ NS_ASSUME_NONNULL_BEGIN
     // it's needed to allow things to render correctly.
     CGRect _viewport;
 }
-- (void) _setSemaphore:(dispatch_semaphore_t) inFlightSemaphore;
-- (void) _setSession:(ARSession*) session;
+@property(nonatomic,retain)dispatch_semaphore_t _inFlightSemaphore;
+@property(nonatomic,retain)ARSession * session;
+
+- (void) _drawCapturedImageWithCommandEncoder:(id<MTLRenderCommandEncoder>)renderEncoder;
 - (void) _updateImagePlaneWithFrame;
 - (void) _updateCameraImage;
-- (void) _loadMetal;
-- (void) setViewport:(CGRect) _viewport;
 - (void) update;
+- (void) setViewport:(CGRect) _viewport;
+- (void) loadMetal;
+
 @end
 
 

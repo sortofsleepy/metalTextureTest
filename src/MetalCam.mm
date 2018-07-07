@@ -22,12 +22,6 @@ static const float kImagePlaneVertexData[16] = {
     1.0,  1.0,  1.0, 0.0,
 };
 @implementation MetalCamView
-- (void) _setSemaphore:(dispatch_semaphore_t) inFlightSemaphore{
-    _inFlightSemaphore = inFlightSemaphore;
-}
-- (void) _setSession:(ARSession*) session{
-    _session = session;
-}
 
 -(void)drawRect:(CGRect)rect{
     if(!self.currentDrawable || !self.currentRenderPassDescriptor){
@@ -35,29 +29,23 @@ static const float kImagePlaneVertexData[16] = {
         return;
     }
     
+    //NSLog(@"rendering %@",self.session);
     [self update];
 }
 
-
-// sets the viewport
-- (void)setViewport:(CGRect)_viewport{
+- (void) setViewport:(CGRect) _viewport{
     self->_viewport = _viewport;
 }
-- (void)dealloc {
-    [super dealloc];
-    CVBufferRelease(_capturedImageTextureYRef);
-    CVBufferRelease(_capturedImageTextureCbCrRef);
-}
 - (void) update {
-
+    
     if (!_session) {
         return;
     }
     
-
+    
     // Wait to ensure only kMaxBuffersInFlight are getting proccessed by any stage in the Metal
     //   pipeline (App, Metal, Drivers, GPU, etc)
-    dispatch_semaphore_wait(_inFlightSemaphore, DISPATCH_TIME_FOREVER);
+    dispatch_semaphore_wait(self._inFlightSemaphore, DISPATCH_TIME_FOREVER);
     
     // Create a new command buffer for each renderpass to the current drawable
     id <MTLCommandBuffer> commandBuffer = [_commandQueue commandBuffer];
@@ -67,7 +55,7 @@ static const float kImagePlaneVertexData[16] = {
     //   finished proccssing the commands we're encoding this frame.  This indicates when the
     //   dynamic buffers, that we're writing to this frame, will no longer be needed by Metal
     //   and the GPU.
-    __block dispatch_semaphore_t block_sema = _inFlightSemaphore;
+    __block dispatch_semaphore_t block_sema = self._inFlightSemaphore;
     // Retain our CVMetalTextureRefs for the duration of the rendering cycle. The MTLTextures
     //   we use from the CVMetalTextureRefs are not valid unless their parent CVMetalTextureRefs
     //   are retained. Since we may release our CVMetalTextureRef ivars during the rendering
@@ -78,6 +66,7 @@ static const float kImagePlaneVertexData[16] = {
         dispatch_semaphore_signal(block_sema);
         CVBufferRelease(capturedImageTextureYRef);
         CVBufferRelease(capturedImageTextureCbCrRef);
+        NSLog(@"Command buffer complete");
     }];
     
     // update camera image
@@ -97,18 +86,47 @@ static const float kImagePlaneVertexData[16] = {
         
         // DRAW PRIMATIVE
         
-        //[self _drawCapturedImageWithCommandEncoder:renderEncoder];
-        //[self _drawAnchorGeometryWithCommandEncoder:renderEncoder];
+        [self _drawCapturedImageWithCommandEncoder:renderEncoder];
         
         // We're done encoding commands
         [renderEncoder endEncoding];
     }else{
-        //NSLog(@"Error - do not have render pass descriptor");
+        NSLog(@"Error - do not have render pass descriptor");
     }
+    // Schedule a present once the framebuffer is complete using the current drawable
+    [commandBuffer presentDrawable:self.currentDrawable];
     
+    // Finalize rendering here & push the command buffer to the GPU
+    [commandBuffer commit];
 }
 
-
+- (void)_drawCapturedImageWithCommandEncoder:(id<MTLRenderCommandEncoder>)renderEncoder{
+    if (_capturedImageTextureYRef == nil || _capturedImageTextureCbCrRef == nil) {
+        //NSLog(@"Have not obtained image");
+        return;
+    }
+    
+    // Push a debug group allowing us to identify render commands in the GPU Frame Capture tool
+    [renderEncoder pushDebugGroup:@"DrawCapturedImage"];
+    
+    // Set render command encoder state
+    [renderEncoder setCullMode:MTLCullModeNone];
+    [renderEncoder setRenderPipelineState:_capturedImagePipelineState];
+    [renderEncoder setDepthStencilState:_capturedImageDepthState];
+    
+    // Set mesh's vertex buffers
+    [renderEncoder setVertexBuffer:_imagePlaneVertexBuffer offset:0 atIndex:kBufferIndexMeshPositions];
+    
+    // Set any textures read/sampled from our render pipeline
+    [renderEncoder setFragmentTexture:CVMetalTextureGetTexture(_capturedImageTextureYRef) atIndex:kTextureIndexY];
+    [renderEncoder setFragmentTexture:CVMetalTextureGetTexture(_capturedImageTextureCbCrRef) atIndex:kTextureIndexCbCr];
+    
+    // Draw each submesh of our mesh
+    [renderEncoder drawPrimitives:MTLPrimitiveTypeTriangleStrip vertexStart:0 vertexCount:4];
+    
+    [renderEncoder popDebugGroup];
+    
+}
 
 - (CVMetalTextureRef)_createTextureFromPixelBuffer:(CVPixelBufferRef)pixelBuffer pixelFormat:(MTLPixelFormat)pixelFormat planeIndex:(NSInteger)planeIndex {
     
@@ -129,7 +147,7 @@ static const float kImagePlaneVertexData[16] = {
     // Update the texture coordinates of our image plane to aspect fill the viewport
     CGAffineTransform displayToCameraTransform = CGAffineTransformInvert([_session.currentFrame displayTransformForOrientation:UIInterfaceOrientationLandscapeRight viewportSize:_viewport.size]);
     
-
+    
     // TODO - example code is fine but here I have to cast? :/
     float *vertexData = (float*)[_imagePlaneVertexBuffer contents];
     
@@ -143,6 +161,7 @@ static const float kImagePlaneVertexData[16] = {
 }
 
 - (void) _updateCameraImage {
+    
     // Create two textures (Y and CbCr) from the provided frame's captured image
     CVPixelBufferRef pixelBuffer = _session.currentFrame.capturedImage;
     
@@ -157,14 +176,12 @@ static const float kImagePlaneVertexData[16] = {
     
     
 }
-
--(void) _loadMetal {
+- (void) loadMetal {
+    self._inFlightSemaphore = dispatch_semaphore_create(kMaxBuffersInFlight);
     
-    _inFlightSemaphore = dispatch_semaphore_create(kMaxBuffersInFlight);
-    
-    _view.depthStencilPixelFormat = MTLPixelFormatDepth32Float_Stencil8;
-    _view.colorPixelFormat = MTLPixelFormatBGRA8Unorm;
-    _view.sampleCount = 1;
+    self.depthStencilPixelFormat = MTLPixelFormatDepth32Float_Stencil8;
+    self.colorPixelFormat = MTLPixelFormatBGRA8Unorm;
+    self.sampleCount = 1;
     
     // Create a vertex buffer with our image plane vertex data.
     _imagePlaneVertexBuffer = [self.device newBufferWithBytes:&kImagePlaneVertexData length:sizeof(kImagePlaneVertexData) options:MTLResourceCPUCacheModeDefaultCache];
@@ -201,20 +218,19 @@ static const float kImagePlaneVertexData[16] = {
     // Create a pipeline state for rendering the captured image
     MTLRenderPipelineDescriptor *capturedImagePipelineStateDescriptor = [[MTLRenderPipelineDescriptor alloc] init];
     capturedImagePipelineStateDescriptor.label = @"MyCapturedImagePipeline";
-    capturedImagePipelineStateDescriptor.sampleCount = _view.sampleCount;
+    capturedImagePipelineStateDescriptor.sampleCount = self.sampleCount;
     capturedImagePipelineStateDescriptor.vertexFunction = capturedImageVertexFunction;
     capturedImagePipelineStateDescriptor.fragmentFunction = capturedImageFragmentFunction;
     capturedImagePipelineStateDescriptor.vertexDescriptor = imagePlaneVertexDescriptor;
-    capturedImagePipelineStateDescriptor.colorAttachments[0].pixelFormat = _view.colorPixelFormat;
-    capturedImagePipelineStateDescriptor.depthAttachmentPixelFormat = _view.depthStencilPixelFormat;
-    capturedImagePipelineStateDescriptor.stencilAttachmentPixelFormat = _view.depthStencilPixelFormat;
+    capturedImagePipelineStateDescriptor.colorAttachments[0].pixelFormat = self.colorPixelFormat;
+    capturedImagePipelineStateDescriptor.depthAttachmentPixelFormat = self.depthStencilPixelFormat;
+    capturedImagePipelineStateDescriptor.stencilAttachmentPixelFormat = self.depthStencilPixelFormat;
     
     NSError *error = nil;
     _capturedImagePipelineState = [self.device newRenderPipelineStateWithDescriptor:capturedImagePipelineStateDescriptor error:&error];
     if (!_capturedImagePipelineState) {
         NSLog(@"Failed to created captured image pipeline state, error %@", error);
     }
-    
     // do stencil setup
     // TODO this might not be needed in this case.
     MTLDepthStencilDescriptor *capturedImageDepthStateDescriptor = [[MTLDepthStencilDescriptor alloc] init];
@@ -228,8 +244,9 @@ static const float kImagePlaneVertexData[16] = {
     // Create the command queue
     _commandQueue = [self.device newCommandQueue];
 }
-@end
 
+
+@end
 // ========= Implement the renderer ========= //
 @implementation MetalCamRenderer
 - (instancetype) setupWithViewport:(ARSession*)session second:(CGRect) _viewport{
@@ -248,14 +265,13 @@ static const float kImagePlaneVertexData[16] = {
     self = [super init];
     
     if(self){
-        _session = session;
+ 
         _view = [[MetalCamView alloc] init];
-        [_view _setSession:session];
-        
-        // TODO this should be mutable value
-        [_view _setSemaphore:dispatch_semaphore_create(kMaxBuffersInFlight)];
-        
         _view.device = MTLCreateSystemDefaultDevice();
+        _view.session = session;
+        _view._inFlightSemaphore = dispatch_semaphore_create(kMaxBuffersInFlight);
+        
+        [_view loadMetal];
     }
 
     return self;
