@@ -20,10 +20,26 @@ NS_ASSUME_NONNULL_BEGIN
 @property (nonatomic) NSUInteger sampleCount;
 @end
 
+typedef struct {
+    int                 cvPixelFormat;
+    MTLPixelFormat      mtlFormat;
+    GLuint              glInternalFormat;
+    GLuint              glFormat;
+    GLuint              glType;
+} AAPLTextureFormatInfo;
+
+
+
 @interface MetalCamView : MTKView {
+    
+    // Reference to the current session
     ARSession * _session;
 
+    // maintains knowledge of the current orientation of the device
+    UIInterfaceOrientation orientation;
+    
     // Metal objects
+    id <MTLTexture> _renderTarget;
     id <MTLCommandQueue> _commandQueue;
     id <MTLBuffer> _sharedUniformBuffer;
     id <MTLBuffer> _anchorUniformBuffer;
@@ -45,10 +61,17 @@ NS_ASSUME_NONNULL_BEGIN
     // current viewport settings - using CGRect cause
     // it's needed to allow things to render correctly.
     CGRect _viewport;
+    
+    // stores formating info that allows interop between OpenGL / Metal
+    AAPLTextureFormatInfo formatInfo;
+    
+    CVPixelBufferRef _sharedPixelBuffer;
+    BOOL pixelBufferBuilt;
 }
 @property(nonatomic,retain)dispatch_semaphore_t _inFlightSemaphore;
 @property(nonatomic,retain)ARSession * session;
 
+- (void) _updateSharedPixelbuffer;
 - (void) _drawCapturedImageWithCommandEncoder:(id<MTLRenderCommandEncoder>)renderEncoder;
 - (void) _updateImagePlaneWithFrame;
 - (void) _updateCameraImage;
@@ -62,14 +85,14 @@ NS_ASSUME_NONNULL_BEGIN
 
 // ========= METAL RENDERER ======= //
 @interface MetalCamRenderer : NSObject {
-    
-    ARSession * _session;
+
     MetalCamView * _view;
 
     // Metal objects
     id <MTLDevice> _device;
     
 }
+
 - (MetalCamView*) getView;
 - (instancetype) setup:(ARSession*) session;
 @end

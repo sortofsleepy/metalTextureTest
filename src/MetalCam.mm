@@ -6,10 +6,15 @@
 //
 
 #import <simd/simd.h>
-#import <ModelIO/ModelIO.h>
+#import <OpenGLES/EAGL.h>
+#import <OpenGLES/ES2/gl.h>
+#import <OpenGLES/ES2/glext.h>
 #import <MetalKit/MetalKit.h>
 #import "MetalCam.h"
 #include "ofMain.h"
+
+#define GL_UNSIGNED_INT_8_8_8_8_REV 0x8367
+
 // Include header shared between C code here, which executes Metal API commands, and .metal files
 #import "ShaderTypes.h"
 
@@ -21,6 +26,25 @@ static const float kImagePlaneVertexData[16] = {
     -1.0,  1.0,  0.0, 0.0,
     1.0,  1.0,  1.0, 0.0,
 };
+
+
+// Table of equivalent formats across CoreVideo, Metal, and OpenGL
+static const AAPLTextureFormatInfo AAPLInteropFormatTable[] =
+{
+    // Core Video Pixel Format,               Metal Pixel Format,            GL internalformat, GL format,   GL type
+    { kCVPixelFormatType_32BGRA,              MTLPixelFormatBGRA8Unorm,      GL_RGBA,           GL_BGRA_EXT, GL_UNSIGNED_INT_8_8_8_8_REV },
+    { kCVPixelFormatType_32BGRA,              MTLPixelFormatBGRA8Unorm_sRGB, GL_RGBA,           GL_BGRA_EXT, GL_UNSIGNED_INT_8_8_8_8_REV },
+};
+
+static NSDictionary* cvBufferProperties = @{
+                                             (__bridge NSString*)kCVPixelBufferOpenGLCompatibilityKey : @YES,
+                                             (__bridge NSString*)kCVPixelBufferMetalCompatibilityKey : @YES,
+                                             };
+
+static const NSUInteger AAPLNumInteropFormats = sizeof(AAPLInteropFormatTable) / sizeof(AAPLTextureFormatInfo);
+
+// ============ METAL CAM VIEW IMPLEMENTATION ============== //
+
 @implementation MetalCamView
 
 -(void)drawRect:(CGRect)rect{
@@ -28,10 +52,35 @@ static const float kImagePlaneVertexData[16] = {
         NSLog(@"unable to render");
         return;
     }
+   
+    // adjust image based on current frame
+    [self _updateImagePlaneWithFrame];
     
-    //NSLog(@"rendering %@",self.session);
+    // update the camera image.
     [self update];
-}
+    
+ 
+    /**
+     About here is where we probably ought to try writing out command buffer content to
+     somethign OpenGL compatible. there is a MTLTexture in self.currentDrawable that we
+     should be able to convert.
+     
+     
+     CVPixelBufferRef sharedBuffer;
+     CVReturn cvret = CVPixelBufferCreate(kCFAllocatorDefault,
+     CVPixelBufferGetWidth(pixelBuffer),
+     CVPixelBufferGetHeight(pixelBuffer),
+     formatInfo.cvPixelFormat,
+     (__bridge CFDictionaryRef)cvBufferProperties,
+     &sharedBuffer);
+     
+     if(cvret != kCVReturnSuccess)
+     {
+     assert(!"Failed to create CVPixelBufferf");
+     }
+     
+     
+     */}
 
 - (void) setViewport:(CGRect) _viewport{
     self->_viewport = _viewport;
@@ -42,6 +91,12 @@ static const float kImagePlaneVertexData[16] = {
         return;
     }
     
+    // if viewport hasn't been set to something other than 0, try to set the viewport
+    // values to be 0,0,<auto calcualted width>, <auto calculated height>
+    _viewport = [[UIScreen mainScreen] bounds];
+    
+    // set the current orientation
+    orientation = [[UIApplication sharedApplication] statusBarOrientation];
     
     // Wait to ensure only kMaxBuffersInFlight are getting proccessed by any stage in the Metal
     //   pipeline (App, Metal, Drivers, GPU, etc)
@@ -66,7 +121,7 @@ static const float kImagePlaneVertexData[16] = {
         dispatch_semaphore_signal(block_sema);
         CVBufferRelease(capturedImageTextureYRef);
         CVBufferRelease(capturedImageTextureCbCrRef);
-        NSLog(@"Command buffer complete");
+        //NSLog(@"Command buffer complete");
     }];
     
     // update camera image
@@ -93,11 +148,56 @@ static const float kImagePlaneVertexData[16] = {
     }else{
         NSLog(@"Error - do not have render pass descriptor");
     }
+    
+    // CREATE PIXEL BUFFER HERE ?
+    [self _updateSharedPixelbuffer];
+    
     // Schedule a present once the framebuffer is complete using the current drawable
     [commandBuffer presentDrawable:self.currentDrawable];
     
     // Finalize rendering here & push the command buffer to the GPU
     [commandBuffer commit];
+    
+ 
+}
+
+- (void) _updateSharedPixelbuffer {
+ 
+    if(self.currentDrawable){
+        
+        // TODO if orientation changes, set pixelBufferBuilt to NO so we can get the correct scaling.
+        if(pixelBufferBuilt == NO){
+            // setup the shared pixel buffer so we can send this to OpenGL
+            // Running out of memory cause of this I'm sure - could move it but not sure how to resize yet.
+            CVReturn cvret = CVPixelBufferCreate(kCFAllocatorDefault,
+                                              self.currentDrawable.layer.drawableSize.width,
+                                                self.currentDrawable.layer.drawableSize.height,
+                                                 formatInfo.cvPixelFormat,
+                                                 (__bridge CFDictionaryRef)cvBufferProperties,
+                                                 &_sharedPixelBuffer);
+            
+            if(cvret != kCVReturnSuccess)
+            {
+                assert(!"Failed to create shared opengl pixel buffer");
+            }
+            
+            pixelBufferBuilt = YES;
+        }
+        
+        CVPixelBufferLockBaseAddress(_sharedPixelBuffer, 0);
+        auto region = MTLRegionMake2D(0, 0, self.currentDrawable.layer.drawableSize.width, self.currentDrawable.layer.drawableSize.height);
+        //auto bytesPerPixel = 4;
+        
+        auto bytesPerRow = CVPixelBufferGetBytesPerRow(_sharedPixelBuffer);
+        
+        void *tmpBuffer = CVPixelBufferGetBaseAddress(_sharedPixelBuffer);
+
+        [self.currentDrawable.texture getBytes:tmpBuffer bytesPerRow:bytesPerRow fromRegion:region mipmapLevel:0];
+        
+        CVPixelBufferUnlockBaseAddress(_sharedPixelBuffer, 0);
+    }
+    
+    
 }
 
 - (void)_drawCapturedImageWithCommandEncoder:(id<MTLRenderCommandEncoder>)renderEncoder{
@@ -125,7 +225,7 @@ static const float kImagePlaneVertexData[16] = {
     [renderEncoder drawPrimitives:MTLPrimitiveTypeTriangleStrip vertexStart:0 vertexCount:4];
     
     [renderEncoder popDebugGroup];
-    
+
 }
 
 - (CVMetalTextureRef)_createTextureFromPixelBuffer:(CVPixelBufferRef)pixelBuffer pixelFormat:(MTLPixelFormat)pixelFormat planeIndex:(NSInteger)planeIndex {
@@ -144,36 +244,41 @@ static const float kImagePlaneVertexData[16] = {
 }
 
 - (void) _updateImagePlaneWithFrame{
-    // Update the texture coordinates of our image plane to aspect fill the viewport
-    CGAffineTransform displayToCameraTransform = CGAffineTransformInvert([_session.currentFrame displayTransformForOrientation:UIInterfaceOrientationLandscapeRight viewportSize:_viewport.size]);
     
-    
-    // TODO - example code is fine but here I have to cast? :/
-    float *vertexData = (float*)[_imagePlaneVertexBuffer contents];
-    
-    for (NSInteger index = 0; index < 4; index++) {
-        NSInteger textureCoordIndex = 4 * index + 2;
-        CGPoint textureCoord = CGPointMake(kImagePlaneVertexData[textureCoordIndex], kImagePlaneVertexData[textureCoordIndex + 1]);
-        CGPoint transformedCoord = CGPointApplyAffineTransform(textureCoord, displayToCameraTransform);
-        vertexData[textureCoordIndex] = transformedCoord.x;
-        vertexData[textureCoordIndex + 1] = transformedCoord.y;
+    if(_session.currentFrame != nil){
+        
+        // Update the texture coordinates of our image plane to aspect fill the viewport
+        CGAffineTransform displayToCameraTransform = CGAffineTransformInvert([_session.currentFrame displayTransformForOrientation:orientation viewportSize:_viewport.size]);
+        
+        
+        // TODO - example code is fine but here I have to cast? :/
+        float *vertexData = (float*)[_imagePlaneVertexBuffer contents];
+        
+        for (NSInteger index = 0; index < 4; index++) {
+            NSInteger textureCoordIndex = 4 * index + 2;
+            CGPoint textureCoord = CGPointMake(kImagePlaneVertexData[textureCoordIndex], kImagePlaneVertexData[textureCoordIndex + 1]);
+            CGPoint transformedCoord = CGPointApplyAffineTransform(textureCoord, displayToCameraTransform);
+            vertexData[textureCoordIndex] = transformedCoord.x;
+            vertexData[textureCoordIndex + 1] = transformedCoord.y;
+        }
     }
+    
+    
 }
 
 - (void) _updateCameraImage {
     
-    // Create two textures (Y and CbCr) from the provided frame's captured image
-    CVPixelBufferRef pixelBuffer = _session.currentFrame.capturedImage;
-    
-    if (CVPixelBufferGetPlaneCount(pixelBuffer) < 2) {
-        return;
+   
+    if(_session.currentFrame){
+        // Create two textures (Y and CbCr) from the provided frame's captured image
+        CVPixelBufferRef pixelBuffer = _session.currentFrame.capturedImage;
+        
+        CVBufferRelease(_capturedImageTextureYRef);
+        CVBufferRelease(_capturedImageTextureCbCrRef);
+        _capturedImageTextureYRef = [self _createTextureFromPixelBuffer:pixelBuffer pixelFormat:MTLPixelFormatR8Unorm planeIndex:0];
+        _capturedImageTextureCbCrRef = [self _createTextureFromPixelBuffer:pixelBuffer pixelFormat:MTLPixelFormatRG8Unorm planeIndex:1];
+        
     }
-    
-    CVBufferRelease(_capturedImageTextureYRef);
-    CVBufferRelease(_capturedImageTextureCbCrRef);
-    _capturedImageTextureYRef = [self _createTextureFromPixelBuffer:pixelBuffer pixelFormat:MTLPixelFormatR8Unorm planeIndex:0];
-    _capturedImageTextureCbCrRef = [self _createTextureFromPixelBuffer:pixelBuffer pixelFormat:MTLPixelFormatRG8Unorm planeIndex:1];
-    
     
 }
 - (void) loadMetal {
@@ -182,6 +287,12 @@ static const float kImagePlaneVertexData[16] = {
     self.depthStencilPixelFormat = MTLPixelFormatDepth32Float_Stencil8;
     self.colorPixelFormat = MTLPixelFormatBGRA8Unorm;
     self.sampleCount = 1;
+    
+    for(int i = 0; i < AAPLNumInteropFormats; i++) {
+        if(self.colorPixelFormat == AAPLInteropFormatTable[i].mtlFormat) {
+            formatInfo = AAPLInteropFormatTable[i];
+        }
+    }
     
     // Create a vertex buffer with our image plane vertex data.
     _imagePlaneVertexBuffer = [self.device newBufferWithBytes:&kImagePlaneVertexData length:sizeof(kImagePlaneVertexData) options:MTLResourceCPUCacheModeDefaultCache];
@@ -243,6 +354,8 @@ static const float kImagePlaneVertexData[16] = {
     
     // Create the command queue
     _commandQueue = [self.device newCommandQueue];
+    
+    pixelBufferBuilt = NO;
 }
 
 
@@ -251,7 +364,6 @@ static const float kImagePlaneVertexData[16] = {
 @implementation MetalCamRenderer
 - (instancetype) setupWithViewport:(ARSession*)session second:(CGRect) _viewport{
     
-    _session = session;
     _view = [[MetalCamView alloc] initWithFrame:_viewport device:MTLCreateSystemDefaultDevice()];
     return self;
 }
@@ -270,12 +382,11 @@ static const float kImagePlaneVertexData[16] = {
         _view.device = MTLCreateSystemDefaultDevice();
         _view.session = session;
         _view._inFlightSemaphore = dispatch_semaphore_create(kMaxBuffersInFlight);
-        
+        _view.framebufferOnly = false;
         [_view loadMetal];
     }
 
     return self;
 }
-
 @end
 
