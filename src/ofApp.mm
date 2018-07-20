@@ -15,9 +15,13 @@ ofApp :: ~ofApp () {
 
 //--------------------------------------------------------------
 void ofApp::setup(){	
-    //camera = [[MetalCamRenderer alloc] setupWithViewport:session second:CGRectMake(0, 0, ofGetWindowWidth(), ofGetWindowHeight())];
-    
 
+    camera = new MetalCamRenderer();
+    camera->setup(
+                 session,
+                 CGRectMake(0, 0, ofGetWindowWidth(), ofGetWindowHeight()),
+                 ofxiOSGetGLView().context
+                 );
     
 }
 
@@ -25,6 +29,8 @@ void ofApp::setup(){
 void ofApp::update(){
 
     //[camera draw];
+    
+    camera->draw();
 }
 
 //--------------------------------------------------------------

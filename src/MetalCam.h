@@ -65,12 +65,20 @@ typedef struct {
     // stores formating info that allows interop between OpenGL / Metal
     AAPLTextureFormatInfo formatInfo;
     
+    // ======= STUFF FOR OPENGL COMPATIBILITY ========= //
+    CVOpenGLESTextureCacheRef _videoTextureCache;
+    
     CVPixelBufferRef _sharedPixelBuffer;
     BOOL pixelBufferBuilt;
+    
+    BOOL openglMode;
 }
 @property(nonatomic,retain)dispatch_semaphore_t _inFlightSemaphore;
 @property(nonatomic,retain)ARSession * session;
 
+- (void) setupOpenGLCompatibility:(CVEAGLContext) eaglContext;
+- (CVPixelBufferRef) getSharedPixelbuffer;
+- (CVOpenGLESTextureRef) convertToOpenGLTexture:(CVPixelBufferRef) pixelBuffer;
 - (void) _updateSharedPixelbuffer;
 - (void) _drawCapturedImageWithCommandEncoder:(id<MTLRenderCommandEncoder>)renderEncoder;
 - (void) _updateImagePlaneWithFrame;
@@ -81,20 +89,43 @@ typedef struct {
 
 @end
 
-
-
-// ========= METAL RENDERER ======= //
-@interface MetalCamRenderer : NSObject {
-
-    MetalCamView * _view;
-
-    // Metal objects
-    id <MTLDevice> _device;
+// ========= Implement the renderer ========= //
+class MetalCamRenderer {
     
-}
+    MetalCamView * _view;
+    ARSession * session;
+    CGRect viewport;
+    CVEAGLContext context;
+public:
+    MetalCamRenderer(){}
+    ~MetalCamRenderer(){}
+    
+    MetalCamView* getView(){
+        return _view;
+    }
+    
+    void draw(){
+        [_view draw];
+    }
+    
+    void setup(ARSession * session, CGRect viewport, CVEAGLContext context){
+        
+        this->session = session;
+        this->viewport = viewport;
+        this->context = context;
+        
+        _view = [[MetalCamView alloc] initWithFrame:viewport device:MTLCreateSystemDefaultDevice()];
+        _view.session = session;
+        _view.framebufferOnly = false;
+        _view.paused = YES;
+        _view.enableSetNeedsDisplay = NO;
+        
+        
+        [_view loadMetal];
+        [_view setupOpenGLCompatibility:context];
+    }
+};
 
-- (MetalCamView*) getView;
-- (instancetype) setup:(ARSession*) session;
-@end
+
 
 NS_ASSUME_NONNULL_END

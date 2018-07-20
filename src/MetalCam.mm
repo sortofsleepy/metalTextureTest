@@ -60,27 +60,7 @@ static const NSUInteger AAPLNumInteropFormats = sizeof(AAPLInteropFormatTable) /
     [self update];
     
  
-    /**
-     About here is where we probably ought to try writing out command buffer content to
-     somethign OpenGL compatible. there is a MTLTexture in self.currentDrawable that we
-     should be able to convert.
-     
-     
-     CVPixelBufferRef sharedBuffer;
-     CVReturn cvret = CVPixelBufferCreate(kCFAllocatorDefault,
-     CVPixelBufferGetWidth(pixelBuffer),
-     CVPixelBufferGetHeight(pixelBuffer),
-     formatInfo.cvPixelFormat,
-     (__bridge CFDictionaryRef)cvBufferProperties,
-     &sharedBuffer);
-     
-     if(cvret != kCVReturnSuccess)
-     {
-     assert(!"Failed to create CVPixelBufferf");
-     }
-     
-     
-     */}
+}
 
 - (void) setViewport:(CGRect) _viewport{
     self->_viewport = _viewport;
@@ -149,7 +129,9 @@ static const NSUInteger AAPLNumInteropFormats = sizeof(AAPLInteropFormatTable) /
         NSLog(@"Error - do not have render pass descriptor");
     }
     
-    // CREATE PIXEL BUFFER HERE ?
+
+    
+    //update shared OpenGL pixelbuffer
     [self _updateSharedPixelbuffer];
     
     // Schedule a present once the framebuffer is complete using the current drawable
@@ -157,35 +139,54 @@ static const NSUInteger AAPLNumInteropFormats = sizeof(AAPLInteropFormatTable) /
     
     // Finalize rendering here & push the command buffer to the GPU
     [commandBuffer commit];
-    
- 
+
 }
+
+
 
 - (void) _updateSharedPixelbuffer {
  
+    auto width = 0;
+    auto height = 0;
+    
+    if(openglMode == NO){
+        width = self.currentDrawable.layer.drawableSize.width;
+        height = self.currentDrawable.layer.drawableSize.height;
+    }else{
+        width = _viewport.size.width;
+        height = _viewport.size.height;
+    }
+    
     if(self.currentDrawable){
         
         // TODO if orientation changes, set pixelBufferBuilt to NO so we can get the correct scaling.
+        // If the pixel buffer hasn't been built yet - build it.
+        // Note that this needs to be in an if statement because otherwise you run out of memory, previous buffer contents aren't overwritten for some reason even though we're pointing to the same pixel buffer.
         if(pixelBufferBuilt == NO){
             // setup the shared pixel buffer so we can send this to OpenGL
-            // Running out of memory cause of this I'm sure - could move it but not sure how to resize yet.
+    
+           
+          
+            
             CVReturn cvret = CVPixelBufferCreate(kCFAllocatorDefault,
-                                              self.currentDrawable.layer.drawableSize.width,
-                                                self.currentDrawable.layer.drawableSize.height,
+                                                 width,
+                                                 height,
                                                  formatInfo.cvPixelFormat,
                                                  (__bridge CFDictionaryRef)cvBufferProperties,
                                                  &_sharedPixelBuffer);
-            
+        
             if(cvret != kCVReturnSuccess)
             {
                 assert(!"Failed to create shared opengl pixel buffer");
+            }else{
+               // NSLog(@"Width %f, height is %f",self.currentDrawable.layer.drawableSize.width,self.currentDrawable.layer.drawableSize.height);
             }
             
             pixelBufferBuilt = YES;
         }
-        
+       
         CVPixelBufferLockBaseAddress(_sharedPixelBuffer, 0);
-        auto region = MTLRegionMake2D(0, 0, self.currentDrawable.layer.drawableSize.width, self.currentDrawable.layer.drawableSize.height);
+        auto region = MTLRegionMake2D(0, 0, width, height);
         //auto bytesPerPixel = 4;
         
         auto bytesPerRow = CVPixelBufferGetBytesPerRow(_sharedPixelBuffer);
@@ -195,6 +196,9 @@ static const NSUInteger AAPLNumInteropFormats = sizeof(AAPLInteropFormatTable) /
         [self.currentDrawable.texture getBytes:tmpBuffer bytesPerRow:bytesPerRow fromRegion:region mipmapLevel:0];
         
         CVPixelBufferUnlockBaseAddress(_sharedPixelBuffer, 0);
+     
+        [self convertToOpenGLTexture:_sharedPixelBuffer];
+        
     }
     
     
@@ -227,6 +231,7 @@ static const NSUInteger AAPLNumInteropFormats = sizeof(AAPLInteropFormatTable) /
     [renderEncoder popDebugGroup];
 
 }
+
 
 - (CVMetalTextureRef)_createTextureFromPixelBuffer:(CVPixelBufferRef)pixelBuffer pixelFormat:(MTLPixelFormat)pixelFormat planeIndex:(NSInteger)planeIndex {
     
@@ -291,6 +296,7 @@ static const NSUInteger AAPLNumInteropFormats = sizeof(AAPLInteropFormatTable) /
     for(int i = 0; i < AAPLNumInteropFormats; i++) {
         if(self.colorPixelFormat == AAPLInteropFormatTable[i].mtlFormat) {
             formatInfo = AAPLInteropFormatTable[i];
+         
         }
     }
     
@@ -355,38 +361,128 @@ static const NSUInteger AAPLNumInteropFormats = sizeof(AAPLInteropFormatTable) /
     // Create the command queue
     _commandQueue = [self.device newCommandQueue];
     
+    // by default - there is no OpenGL compatibility so set pixel buffer flag to YES to
+    // stop initialization.
+    pixelBufferBuilt = YES;
+    
+   
+    
+}
+
+// =========== OPENGL COMPATIBILTY =========== //
+
+- (void) setupOpenGLCompatibility:(CVEAGLContext) eaglContext{
+    // initialize video texture cache
+    CVReturn err = CVOpenGLESTextureCacheCreate(
+                                                kCFAllocatorDefault,
+                                                nil,
+                                                eaglContext,
+                                                nil,
+                                                &_videoTextureCache);
+    if (err){
+        NSLog(@"Error at CVOpenGLESTextureCacheCreate %d", err);
+    }
+    
+    openglMode = YES;
     pixelBufferBuilt = NO;
 }
 
-
-@end
-// ========= Implement the renderer ========= //
-@implementation MetalCamRenderer
-- (instancetype) setupWithViewport:(ARSession*)session second:(CGRect) _viewport{
-    
-    _view = [[MetalCamView alloc] initWithFrame:_viewport device:MTLCreateSystemDefaultDevice()];
-    return self;
+- (CVPixelBufferRef) getSharedPixelbuffer{
+    return _sharedPixelBuffer;
 }
-
-// returns the MTKView object
-- (MetalCamView*) getView {
-    return _view;
-}
-
-- (instancetype) setup:(ARSession*) session{
-    self = [super init];
+- (CVOpenGLESTextureRef) convertToOpenGLTexture:(CVPixelBufferRef) pixelBuffer{
+    CVOpenGLESTextureRef texture = NULL;
+         CVPixelBufferLockBaseAddress(_sharedPixelBuffer, 0);
     
-    if(self){
- 
-        _view = [[MetalCamView alloc] init];
-        _view.device = MTLCreateSystemDefaultDevice();
-        _view.session = session;
-        _view._inFlightSemaphore = dispatch_semaphore_create(kMaxBuffersInFlight);
-        _view.framebufferOnly = false;
-        [_view loadMetal];
+    CVReturn err = noErr;
+    err = CVOpenGLESTextureCacheCreateTextureFromImage(kCFAllocatorDefault,
+                                                       _videoTextureCache,
+                                                       _sharedPixelBuffer,
+                                                       nil,
+                                                       GL_TEXTURE_2D,
+                                                       formatInfo.glInternalFormat,
+                                                       CVPixelBufferGetWidth(_sharedPixelBuffer),
+                                                       CVPixelBufferGetHeight(_sharedPixelBuffer),
+                                                       formatInfo.glFormat,
+                                                       formatInfo.glType,
+                                                       0,
+                                                       &texture);
+    
+    if (err != kCVReturnSuccess) {
+        CVBufferRelease(texture);
+
+        //NSLog(@"Error at CVOpenGLESTextureCacheCreateTextureFromImage %d", err);
+        if(err == kCVReturnInvalidPixelFormat){
+            NSLog(@"Invalid pixel format");
+        }
+        
+        if(err == kCVReturnInvalidPixelBufferAttributes){
+            NSLog(@"Invalid pixel buffer attributes");
+        }
+        
+        if(err == kCVReturnInvalidSize){
+            NSLog(@"invalid size");
+        }
+        
+        if(err == kCVReturnPixelBufferNotOpenGLCompatible){
+            NSLog(@"not opengl compatible");
+        }
+        
     }
-
-    return self;
+    
+    // clear texture cache
+    CVOpenGLESTextureCacheFlush(_videoTextureCache, 0);
+    CVPixelBufferUnlockBaseAddress(_sharedPixelBuffer, 0);
+    return texture;
+    
 }
 @end
+
+
+/*
+ @implementation MetalCamRenderer
+ - (instancetype) setupWithViewport:(ARSession*)session second:(CGRect) _viewport{
+ 
+ _view = [[MetalCamView alloc] initWithFrame:_viewport device:MTLCreateSystemDefaultDevice()];
+ return self;
+ }
+ 
+ - (instancetype) setupForOpenGL:(ARSession*) session viewport:(CGRect) _viewport ctx:(CVEAGLContext) context {
+ self = [super init];
+ 
+ if(self ){
+ _view = [[MetalCamView alloc] initWithFrame:_viewport device:MTLCreateSystemDefaultDevice()];
+ _view.session = session;
+ _view.framebufferOnly = false;
+ _view.paused = YES;
+ _view.enableSetNeedsDisplay = NO;
+ 
+ 
+ [_view loadMetal];
+ [_view setupOpenGLCompatibility:context];
+ }
+ return self;
+ }
+ 
+ // returns the MTKView object
+ - (MetalCamView*) getView {
+ return _view;
+ }
+ 
+ - (instancetype) setup:(ARSession*) session{
+ self = [super init];
+ 
+ if(self){
+ 
+ _view = [[MetalCamView alloc] init];
+ _view.device = MTLCreateSystemDefaultDevice();
+ _view.session = session;
+ _view.framebufferOnly = false;
+ [_view loadMetal];
+ }
+ 
+ return self;
+ }
+ @end
+ */
 

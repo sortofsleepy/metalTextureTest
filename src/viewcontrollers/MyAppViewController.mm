@@ -18,25 +18,17 @@
 - (void)loadView {
     [super loadView];
     
-   
-    self.session = [ARSession new];
-
-    ARWorldTrackingConfiguration *configuration = [ARWorldTrackingConfiguration new];
-    
-    // setup horizontal plane detection - note that this is optional
-    configuration.planeDetection = ARPlaneDetectionHorizontal;
-    
-    // start the session
-    [self.session runWithConfiguration:configuration];
-    
-    camera = [[MetalCamRenderer alloc] setup:self.session];
+    ARCore::SFormat format;
+    format.enableLighting();
+    self.session = ARCore::generateNewSession(format);
+    //camera = [[MetalCamRenderer alloc] setup:self.session];
     
   
     OFAppViewController *viewController;
     viewController = [[[OFAppViewController alloc] initWithFrame:[[UIScreen mainScreen] bounds]
                                                                  app:new ofApp(self.session)] autorelease];
     
-    viewController.view = [camera getView];
+    //viewController.view = [camera getView];
     //[viewController.view addSubview:[camera getView]];
     
     

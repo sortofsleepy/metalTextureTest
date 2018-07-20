@@ -6,8 +6,6 @@
 #import <UIKit/UIKit.h>
 #import <ARKit/ARKit.h>
 #import "MetalCam.h"
-@interface MyAppViewController : UIViewController {
-    MetalCamRenderer * camera;
-}
+@interface MyAppViewController : UIViewController
 
 @end
