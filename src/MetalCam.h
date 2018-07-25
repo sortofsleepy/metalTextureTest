@@ -52,6 +52,9 @@ typedef struct {
     CVMetalTextureRef _capturedImageTextureYRef;
     CVMetalTextureRef _capturedImageTextureCbCrRef;
     
+    //! Shared camera texture that's used to hold a converted MetalTexture
+    CVOpenGLESTextureRef openglTexture;
+    
     // Captured image texture cache
     CVMetalTextureCacheRef _capturedImageTextureCache;
     
@@ -67,7 +70,6 @@ typedef struct {
     
     // ======= STUFF FOR OPENGL COMPATIBILITY ========= //
     CVOpenGLESTextureCacheRef _videoTextureCache;
-    
     CVPixelBufferRef _sharedPixelBuffer;
     BOOL pixelBufferBuilt;
     
@@ -79,6 +81,7 @@ typedef struct {
 - (void) setupOpenGLCompatibility:(CVEAGLContext) eaglContext;
 - (CVPixelBufferRef) getSharedPixelbuffer;
 - (CVOpenGLESTextureRef) convertToOpenGLTexture:(CVPixelBufferRef) pixelBuffer;
+- (CVOpenGLESTextureRef) getConvertedTexture;
 - (void) _updateSharedPixelbuffer;
 - (void) _drawCapturedImageWithCommandEncoder:(id<MTLRenderCommandEncoder>)renderEncoder;
 - (void) _updateImagePlaneWithFrame;
@@ -104,8 +107,17 @@ public:
         return _view;
     }
     
+    CVOpenGLESTextureRef getTexture(){
+        return [_view getConvertedTexture];
+    }
+    
     void draw(){
         [_view draw];
+    }
+    
+    void setViewport(int width,int height){
+        viewport = CGRectMake(0,0,width,height);
+        [_view setViewport:viewport];
     }
     
     void setup(ARSession * session, CGRect viewport, CVEAGLContext context){
@@ -116,7 +128,7 @@ public:
         
         _view = [[MetalCamView alloc] initWithFrame:viewport device:MTLCreateSystemDefaultDevice()];
         _view.session = session;
-        _view.framebufferOnly = false;
+        _view.framebufferOnly = NO;
         _view.paused = YES;
         _view.enableSetNeedsDisplay = NO;
         

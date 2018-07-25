@@ -48,7 +48,7 @@ static const NSUInteger AAPLNumInteropFormats = sizeof(AAPLInteropFormatTable) /
 @implementation MetalCamView
 
 -(void)drawRect:(CGRect)rect{
-    if(!self.currentDrawable || !self.currentRenderPassDescriptor){
+    if(!self.currentDrawable && !self.currentRenderPassDescriptor){
         NSLog(@"unable to render");
         return;
     }
@@ -59,7 +59,7 @@ static const NSUInteger AAPLNumInteropFormats = sizeof(AAPLInteropFormatTable) /
     // update the camera image.
     [self update];
     
- 
+   
 }
 
 - (void) setViewport:(CGRect) _viewport{
@@ -128,8 +128,7 @@ static const NSUInteger AAPLNumInteropFormats = sizeof(AAPLInteropFormatTable) /
     }else{
         NSLog(@"Error - do not have render pass descriptor");
     }
-    
-
+   
     
     //update shared OpenGL pixelbuffer
     [self _updateSharedPixelbuffer];
@@ -142,67 +141,6 @@ static const NSUInteger AAPLNumInteropFormats = sizeof(AAPLInteropFormatTable) /
 
 }
 
-
-
-- (void) _updateSharedPixelbuffer {
- 
-    auto width = 0;
-    auto height = 0;
-    
-    if(openglMode == NO){
-        width = self.currentDrawable.layer.drawableSize.width;
-        height = self.currentDrawable.layer.drawableSize.height;
-    }else{
-        width = _viewport.size.width;
-        height = _viewport.size.height;
-    }
-    
-    if(self.currentDrawable){
-        
-        // TODO if orientation changes, set pixelBufferBuilt to NO so we can get the correct scaling.
-        // If the pixel buffer hasn't been built yet - build it.
-        // Note that this needs to be in an if statement because otherwise you run out of memory, previous buffer contents aren't overwritten for some reason even though we're pointing to the same pixel buffer.
-        if(pixelBufferBuilt == NO){
-            // setup the shared pixel buffer so we can send this to OpenGL
-    
-           
-          
-            
-            CVReturn cvret = CVPixelBufferCreate(kCFAllocatorDefault,
-                                                 width,
-                                                 height,
-                                                 formatInfo.cvPixelFormat,
-                                                 (__bridge CFDictionaryRef)cvBufferProperties,
-                                                 &_sharedPixelBuffer);
-        
-            if(cvret != kCVReturnSuccess)
-            {
-                assert(!"Failed to create shared opengl pixel buffer");
-            }else{
-               // NSLog(@"Width %f, height is %f",self.currentDrawable.layer.drawableSize.width,self.currentDrawable.layer.drawableSize.height);
-            }
-            
-            pixelBufferBuilt = YES;
-        }
-       
-        CVPixelBufferLockBaseAddress(_sharedPixelBuffer, 0);
-        auto region = MTLRegionMake2D(0, 0, width, height);
-        //auto bytesPerPixel = 4;
-        
-        auto bytesPerRow = CVPixelBufferGetBytesPerRow(_sharedPixelBuffer);
-        
-        void *tmpBuffer = CVPixelBufferGetBaseAddress(_sharedPixelBuffer);
-
-        [self.currentDrawable.texture getBytes:tmpBuffer bytesPerRow:bytesPerRow fromRegion:region mipmapLevel:0];
-        
-        CVPixelBufferUnlockBaseAddress(_sharedPixelBuffer, 0);
-     
-        [self convertToOpenGLTexture:_sharedPixelBuffer];
-        
-    }
-    
-    
-}
 
 - (void)_drawCapturedImageWithCommandEncoder:(id<MTLRenderCommandEncoder>)renderEncoder{
     if (_capturedImageTextureYRef == nil || _capturedImageTextureCbCrRef == nil) {
@@ -243,6 +181,7 @@ static const NSUInteger AAPLNumInteropFormats = sizeof(AAPLInteropFormatTable) /
     if (status != kCVReturnSuccess) {
         CVBufferRelease(mtlTextureRef);
         mtlTextureRef = nil;
+        NSLog(@"Issue cureating texture from pixel buffer");
     }
     
     return mtlTextureRef;
@@ -365,12 +304,82 @@ static const NSUInteger AAPLNumInteropFormats = sizeof(AAPLInteropFormatTable) /
     // stop initialization.
     pixelBufferBuilt = YES;
     
-   
-    
 }
 
 // =========== OPENGL COMPATIBILTY =========== //
 
+
+- (CVOpenGLESTextureRef) getConvertedTexture{
+    return openglTexture;
+}
+- (void) _updateSharedPixelbuffer {
+    
+    auto width = 0;
+    auto height = 0;
+    
+    
+    
+    
+    
+    if(self.currentDrawable && _session.currentFrame.capturedImage){
+        
+        
+        
+        
+        
+        //width = CVPixelBufferGetWidth(_session.currentFrame.capturedImage);
+        //height = CVPixelBufferGetHeight(_session.currentFrame.capturedImage);
+        auto bounds = [[UIScreen mainScreen] nativeBounds];
+        //auto scale = [[UIScreen mainScreen] nativeScale];
+        width = bounds.size.width * 2;
+        height = bounds.size.height * 2;
+        
+        //NSLog(@"Width is %i and height is %i",width,height);
+        
+        // TODO if orientation changes, set pixelBufferBuilt to NO so we can get the correct scaling.
+        // If the pixel buffer hasn't been built yet - build it.
+        // Note that this needs to be in an if statement because otherwise you run out of memory, previous buffer contents aren't overwritten for some reason even though we're pointing to the same pixel buffer.
+        // Also setting the pixel buffer width / height to match the drawable doesn't work for some reason. Too large?
+        
+        if(pixelBufferBuilt == NO){
+            // setup the shared pixel buffer so we can send this to OpenGL
+            
+            
+            
+            CVReturn cvret = CVPixelBufferCreate(kCFAllocatorDefault,
+                                                 width,height,
+                                                 formatInfo.cvPixelFormat,
+                                                 (__bridge CFDictionaryRef)cvBufferProperties,
+                                                 &_sharedPixelBuffer);
+            
+            if(cvret != kCVReturnSuccess)
+            {
+                assert(!"Failed to create shared opengl pixel buffer");
+            }else{
+                // NSLog(@"Width %f, height is %f",self.currentDrawable.layer.drawableSize.width,self.currentDrawable.layer.drawableSize.height);
+            }
+            
+            pixelBufferBuilt = YES;
+        }
+        
+        CVPixelBufferLockBaseAddress(_sharedPixelBuffer, 0);
+     
+        auto region = MTLRegionMake2D(0, 0, width, height);
+        //auto bytesPerPixel = 4;
+        
+        NSInteger bytesPerRow = CVPixelBufferGetBytesPerRow(_sharedPixelBuffer);
+        
+        [self.currentDrawable.texture getBytes:CVPixelBufferGetBaseAddress(_sharedPixelBuffer) bytesPerRow:bytesPerRow fromRegion:region mipmapLevel:0];
+        
+        openglTexture = [self convertToOpenGLTexture:_sharedPixelBuffer];
+        
+      
+        CVPixelBufferUnlockBaseAddress(_sharedPixelBuffer, 0);
+        
+    }
+    
+    
+}
 - (void) setupOpenGLCompatibility:(CVEAGLContext) eaglContext{
     // initialize video texture cache
     CVReturn err = CVOpenGLESTextureCacheCreate(
@@ -392,7 +401,8 @@ static const NSUInteger AAPLNumInteropFormats = sizeof(AAPLInteropFormatTable) /
 }
 - (CVOpenGLESTextureRef) convertToOpenGLTexture:(CVPixelBufferRef) pixelBuffer{
     CVOpenGLESTextureRef texture = NULL;
-         CVPixelBufferLockBaseAddress(_sharedPixelBuffer, 0);
+    
+    CVPixelBufferLockBaseAddress(_sharedPixelBuffer, 0);
     
     CVReturn err = noErr;
     err = CVOpenGLESTextureCacheCreateTextureFromImage(kCFAllocatorDefault,
@@ -433,6 +443,7 @@ static const NSUInteger AAPLNumInteropFormats = sizeof(AAPLInteropFormatTable) /
     // clear texture cache
     CVOpenGLESTextureCacheFlush(_videoTextureCache, 0);
     CVPixelBufferUnlockBaseAddress(_sharedPixelBuffer, 0);
+    
     return texture;
     
 }
