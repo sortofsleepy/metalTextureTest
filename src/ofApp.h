@@ -33,7 +33,7 @@ class ofApp : public ofxiOSApp {
         
     ofTextureData data;
     ofTexture tex;
-    MetalCamRenderer * camera;
+    ofxARKit::core::MetalCamRenderer * camera;
     ofMesh mesh;
     ofCamera cam;
     ofShader shader;

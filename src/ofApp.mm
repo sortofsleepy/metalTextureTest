@@ -16,7 +16,7 @@ ofApp :: ~ofApp () {
 //--------------------------------------------------------------
 void ofApp::setup(){	
 
-    camera = new MetalCamRenderer();
+    camera = new ofxARKit::core::MetalCamRenderer();
     camera->setup(
                  session,
                  CGRectMake(0, 0, ofGetWindowWidth(), ofGetWindowHeight()),
@@ -46,14 +46,7 @@ void ofApp::update(){
 void ofApp::draw(){
  
     auto _tex = camera->getTexture();
-    glBindTexture(CVOpenGLESTextureGetTarget(_tex), CVOpenGLESTextureGetName(_tex));
-    glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-    glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-    glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER,GL_LINEAR);
-    glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER,GL_LINEAR);
-  
-    glBindTexture(CVOpenGLESTextureGetTarget(_tex), 0);
-    
+
     if(_tex){
         shader.begin();
         

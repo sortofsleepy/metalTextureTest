@@ -101,7 +101,6 @@ static const NSUInteger AAPLNumInteropFormats = sizeof(AAPLInteropFormatTable) /
         dispatch_semaphore_signal(block_sema);
         CVBufferRelease(capturedImageTextureYRef);
         CVBufferRelease(capturedImageTextureCbCrRef);
-        //NSLog(@"Command buffer complete");
     }];
     
     // update camera image
@@ -129,9 +128,13 @@ static const NSUInteger AAPLNumInteropFormats = sizeof(AAPLInteropFormatTable) /
         NSLog(@"Error - do not have render pass descriptor");
     }
    
-    
+   
     //update shared OpenGL pixelbuffer
-    [self _updateSharedPixelbuffer];
+    // if running in openFrameworks
+    if(openglMode){
+        [self _updateSharedPixelbuffer];
+    }
+   
     
     // Schedule a present once the framebuffer is complete using the current drawable
     [commandBuffer presentDrawable:self.currentDrawable];
@@ -323,17 +326,48 @@ static const NSUInteger AAPLNumInteropFormats = sizeof(AAPLInteropFormatTable) /
     
     if(self.currentDrawable && _session.currentFrame.capturedImage){
         
+        /**
+            TODO values are currently a bit fudged. Probably need to figure out better solution
+         
+            Figuring out the pixelBuffer size to get an accurate representation from the Metal frame.
+            For some reason - default image is really zoomed in compared to when using the MTKView on it's own.
+            Making the sharedPixelBuffer size to be larger fixes the issue, the problem now is coming up
+            with an accurate value.
+         
+            Multiplying the bounds of the screen by the scale doesn't work oddly enough, it results in an
+            error during OpenGL texture creation due to the resulting height being larger than the max texture size of 4096.
+         
+            Multiplying the bounds by 2 seems to do the trick though it's unclear if it's accurate or not at the moment.
+         
+            Testing results. Note all values are divided by 2
+            1. when using scale - width is 1620 and height is 2880
+         
+            2. when using nativeScale - 1408 and height is 2504
+         
+            3. no scaling(note values are multiplied by 2 here) - Width is 2160 and height is 3840
+         
+            Taking
+            <full frame width * scale> - <native width> and <full frame height * scale> - <native height> seems
+            to be the best solution.
+         */
         
         
         
+        // Still zoomed in here - also need to flip width/height otherwise it looks like there's distortion
+        //width = CVPixelBufferGetHeight(_session.currentFrame.capturedImage);
+        //height = CVPixelBufferGetWidth(_session.currentFrame.capturedImage);
         
-        //width = CVPixelBufferGetWidth(_session.currentFrame.capturedImage);
-        //height = CVPixelBufferGetHeight(_session.currentFrame.capturedImage);
-        auto bounds = [[UIScreen mainScreen] nativeBounds];
-        //auto scale = [[UIScreen mainScreen] nativeScale];
-        width = bounds.size.width * 2;
-        height = bounds.size.height * 2;
+        // note that imageResolution is returned in a way as if the camera were in landscape mode so you may need to reverse values. Also note that this is not updated automatically, so probably gonna stick with native bounds of screen.
+        //CGSize bounds = _session.configuration.videoFormat.imageResolution;
         
+        CGRect screenBounds = [[UIScreen mainScreen] nativeBounds];
+        auto scale = [[UIScreen mainScreen] nativeScale];
+        
+        CGSize fullFrame = CGSizeMake(screenBounds.size.width * scale, screenBounds.size.height * scale);
+       
+        width = fullFrame.width - screenBounds.size.width;
+        height = fullFrame.height - screenBounds.size.height;
+       
         //NSLog(@"Width is %i and height is %i",width,height);
         
         // TODO if orientation changes, set pixelBufferBuilt to NO so we can get the correct scaling.
@@ -343,9 +377,6 @@ static const NSUInteger AAPLNumInteropFormats = sizeof(AAPLInteropFormatTable) /
         
         if(pixelBufferBuilt == NO){
             // setup the shared pixel buffer so we can send this to OpenGL
-            
-            
-            
             CVReturn cvret = CVPixelBufferCreate(kCFAllocatorDefault,
                                                  width,height,
                                                  formatInfo.cvPixelFormat,
@@ -363,22 +394,31 @@ static const NSUInteger AAPLNumInteropFormats = sizeof(AAPLInteropFormatTable) /
         }
         
         CVPixelBufferLockBaseAddress(_sharedPixelBuffer, 0);
-     
+        // set the region we want to capture in the Metal frame
         auto region = MTLRegionMake2D(0, 0, width, height);
-        //auto bytesPerPixel = 4;
         
+        // set the bytes per row
         NSInteger bytesPerRow = CVPixelBufferGetBytesPerRow(_sharedPixelBuffer);
         
+        // grab texture data from Metal
         [self.currentDrawable.texture getBytes:CVPixelBufferGetBaseAddress(_sharedPixelBuffer) bytesPerRow:bytesPerRow fromRegion:region mipmapLevel:0];
         
+        // convert shared pixel buffer into an OpenGL texture
         openglTexture = [self convertToOpenGLTexture:_sharedPixelBuffer];
         
-      
+        // correct wrapping and filtering
+        glBindTexture(CVOpenGLESTextureGetTarget(openglTexture), CVOpenGLESTextureGetName(openglTexture));
+        glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER,GL_LINEAR);
+        glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER,GL_LINEAR);
+        glBindTexture(CVOpenGLESTextureGetTarget(openglTexture), 0);
+        
         CVPixelBufferUnlockBaseAddress(_sharedPixelBuffer, 0);
         
     }
     
-    
+
 }
 - (void) setupOpenGLCompatibility:(CVEAGLContext) eaglContext{
     // initialize video texture cache
@@ -394,6 +434,7 @@ static const NSUInteger AAPLNumInteropFormats = sizeof(AAPLInteropFormatTable) /
     
     openglMode = YES;
     pixelBufferBuilt = NO;
+    zoomFactor = 2.0;
 }
 
 - (CVPixelBufferRef) getSharedPixelbuffer{
@@ -450,50 +491,5 @@ static const NSUInteger AAPLNumInteropFormats = sizeof(AAPLInteropFormatTable) /
 @end
 
 
-/*
- @implementation MetalCamRenderer
- - (instancetype) setupWithViewport:(ARSession*)session second:(CGRect) _viewport{
- 
- _view = [[MetalCamView alloc] initWithFrame:_viewport device:MTLCreateSystemDefaultDevice()];
- return self;
- }
- 
- - (instancetype) setupForOpenGL:(ARSession*) session viewport:(CGRect) _viewport ctx:(CVEAGLContext) context {
- self = [super init];
- 
- if(self ){
- _view = [[MetalCamView alloc] initWithFrame:_viewport device:MTLCreateSystemDefaultDevice()];
- _view.session = session;
- _view.framebufferOnly = false;
- _view.paused = YES;
- _view.enableSetNeedsDisplay = NO;
- 
- 
- [_view loadMetal];
- [_view setupOpenGLCompatibility:context];
- }
- return self;
- }
- 
- // returns the MTKView object
- - (MetalCamView*) getView {
- return _view;
- }
- 
- - (instancetype) setup:(ARSession*) session{
- self = [super init];
- 
- if(self){
- 
- _view = [[MetalCamView alloc] init];
- _view.device = MTLCreateSystemDefaultDevice();
- _view.session = session;
- _view.framebufferOnly = false;
- [_view loadMetal];
- }
- 
- return self;
- }
- @end
- */
+
 

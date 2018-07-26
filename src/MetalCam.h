@@ -74,6 +74,9 @@ typedef struct {
     BOOL pixelBufferBuilt;
     
     BOOL openglMode;
+    
+    // this affects how zoomed in the final image is.
+    float zoomFactor;
 }
 @property(nonatomic,retain)dispatch_semaphore_t _inFlightSemaphore;
 @property(nonatomic,retain)ARSession * session;
@@ -93,51 +96,54 @@ typedef struct {
 @end
 
 // ========= Implement the renderer ========= //
-class MetalCamRenderer {
+namespace ofxARKit {
+    namespace core {
+        class MetalCamRenderer {
+            
+            MetalCamView * _view;
+            ARSession * session;
+            CGRect viewport;
+            CVEAGLContext context;
+        public:
+            MetalCamRenderer(){}
+            ~MetalCamRenderer(){}
+            
+            MetalCamView* getView(){
+                return _view;
+            }
+            
+            CVOpenGLESTextureRef getTexture(){
+                return [_view getConvertedTexture];
+            }
+            
+            void draw(){
+                [_view draw];
+            }
+            
+            void setViewport(int width,int height){
+                viewport = CGRectMake(0,0,width,height);
+                [_view setViewport:viewport];
+            }
+            
+            void setup(ARSession * session, CGRect viewport, CVEAGLContext context){
+                
+                this->session = session;
+                this->viewport = viewport;
+                this->context = context;
+                
+                _view = [[MetalCamView alloc] initWithFrame:viewport device:MTLCreateSystemDefaultDevice()];
+                _view.session = session;
+                _view.framebufferOnly = NO;
+                _view.paused = YES;
+                _view.enableSetNeedsDisplay = NO;
+                
+                
+                [_view loadMetal];
+                [_view setupOpenGLCompatibility:context];
+            }
+        };
     
-    MetalCamView * _view;
-    ARSession * session;
-    CGRect viewport;
-    CVEAGLContext context;
-public:
-    MetalCamRenderer(){}
-    ~MetalCamRenderer(){}
-    
-    MetalCamView* getView(){
-        return _view;
     }
-    
-    CVOpenGLESTextureRef getTexture(){
-        return [_view getConvertedTexture];
-    }
-    
-    void draw(){
-        [_view draw];
-    }
-    
-    void setViewport(int width,int height){
-        viewport = CGRectMake(0,0,width,height);
-        [_view setViewport:viewport];
-    }
-    
-    void setup(ARSession * session, CGRect viewport, CVEAGLContext context){
-        
-        this->session = session;
-        this->viewport = viewport;
-        this->context = context;
-        
-        _view = [[MetalCamView alloc] initWithFrame:viewport device:MTLCreateSystemDefaultDevice()];
-        _view.session = session;
-        _view.framebufferOnly = NO;
-        _view.paused = YES;
-        _view.enableSetNeedsDisplay = NO;
-        
-        
-        [_view loadMetal];
-        [_view setupOpenGLCompatibility:context];
-    }
-};
-
-
+}
 
 NS_ASSUME_NONNULL_END
